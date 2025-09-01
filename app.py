@@ -26,31 +26,38 @@ import gc
 import psutil
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 app = FastAPI(title="Email Tools Application for Pulsus")
 
 
-
-
 class SendEndpoint(BaseModel):
     csv_file: Annotated[UploadFile, File(..., title="CSV File", description="Upload the CSV File...")]
-    email_template_file: Annotated[UploadFile, File(..., title="Email Template", description="Upload the Email Template...")]
-    subjectForEmail: Annotated[str, Form(..., title="Subject for email", description="Enter the subject for the email...")]
+    email_template_file: Annotated[
+        UploadFile, File(..., title="Email Template", description="Upload the Email Template...")]
+    subjectForEmail: Annotated[
+        str, Form(..., title="Subject for email", description="Enter the subject for the email...")]
     sender_email: Annotated[EmailStr, Form(..., title="Sender's email", description="Enter the sender's email...")]
     sender_name: Annotated[str, Form(..., title="Sender's name", description="Enter the sender's name...")]
-    sender_password: Annotated[str, Form(..., title="Sender's email password", description="Enter the sender's email password...")]
+    sender_password: Annotated[
+        str, Form(..., title="Sender's email password", description="Enter the sender's email password...")]
     smtp_server_option: Annotated[str, Form(..., title="SMTP server Option", description="Select the SMTP Server...")]
-    custom_smtp_server: Annotated[Optional[str], Form(default=None,title="Custom SMTP server", description="Enter the custom SMTP server...")]
-    smtp_port_option: Annotated[str, Form(...,title="SMTP port option...", description="Select the SMTP port...")]
-    custom_smtp_port: Annotated[Optional[str], Form(default=None, title="Custom SMTP Port...", description="Enter a custom SMTP Port...")]
-    max_emails: Annotated[int, Form(..., title="Max Email to send", description="Enter a int which gonna limit the email sharing...")]
-    delay: Annotated[int, Form(default=5, title="The delay inbetween two mails", description="Enter the delay you want to create which gonna reflect inbetween two mail sending...")]
+    custom_smtp_server: Annotated[
+        Optional[str], Form(default=None, title="Custom SMTP server", description="Enter the custom SMTP server...")]
+    smtp_port_option: Annotated[str, Form(..., title="SMTP port option...", description="Select the SMTP port...")]
+    custom_smtp_port: Annotated[
+        Optional[str], Form(default=None, title="Custom SMTP Port...", description="Enter a custom SMTP Port...")]
+    max_emails: Annotated[
+        int, Form(..., title="Max Email to send", description="Enter a int which gonna limit the email sharing...")]
+    delay: Annotated[int, Form(default=5, title="The delay inbetween two mails",
+                               description="Enter the delay you want to create which gonna reflect inbetween two mail sending...")]
 
 
 class ScrapeEmail(BaseModel):
     search_term: Annotated[str, Field(..., title="Search Term", description="Enter the Search Term...")]
-    max_authors: Annotated[Optional[int], Field(default=10000, title="Maximum authors to search", description="Enter The No. of authors you want to search...")]
+    max_authors: Annotated[Optional[int], Field(default=10000, title="Maximum authors to search",
+                                                description="Enter The No. of authors you want to search...")]
 
 
 class FilterEmail(BaseModel):
@@ -58,22 +65,25 @@ class FilterEmail(BaseModel):
     sender_email: EmailStr = Form(..., title="Sender's email", description="Enter the sender's email")
     resume: bool = Form(False, title="Resume the steps", description="Resume from last checkpoint")
 
+
 @app.get("/", response_class=HTMLResponse, summary="Serve the email sender HTML form")
 def get_email_form(request: Request):
     return templates.TemplateResponse("upload_form.html", {"request": request, "active_page": "sender"})
 
+
 @app.get("/email-filter", response_class=HTMLResponse, summary="Serve the email filter HTML form")
 def get_email_filter_form(request: Request):
     return templates.TemplateResponse("email_filter.html", {"request": request, "active_page": "filter"})
+
 
 @app.get("/email-scraper", response_class=HTMLResponse, summary="Serve the email scraper HTML form")
 def get_email_scraper_form(request: Request):
     return templates.TemplateResponse("email_scraper.html", {"request": request, "active_page": "scraper"})
 
 
-
 # Configure Jinja2Templates to find templates in the "templates" directory
 templates = Jinja2Templates(directory="templates")
+
 
 # ====================================================================
 # Utility Functions
@@ -85,22 +95,23 @@ def log_memory_usage():
     memory_info = process.memory_info()
     print(f"Memory usage: {memory_info.rss / 1024 / 1024:.2f} MB")
 
+
 # ====================================================================
 # Email Sending and Validation Functions
 # ====================================================================
 
 def send_email(
-    subjectForEmail: str,
-    sender_email: str,
-    sender_name: str,
-    sender_password: str,
-    recipient_name: str,
-    recipient_email: str,
-    journal: str,
-    article_title: str,
-    smtp_server: str,
-    smtp_port: int,
-    template_content: str
+        subjectForEmail: str,
+        sender_email: str,
+        sender_name: str,
+        sender_password: str,
+        recipient_name: str,
+        recipient_email: str,
+        journal: str,
+        article_title: str,
+        smtp_server: str,
+        smtp_port: int,
+        template_content: str
 ) -> tuple[bool, str]:
     """Send a personalized email to an author using HTML template."""
     html = template_content.format(name=recipient_name, article_title=article_title, journal=journal)
@@ -113,13 +124,10 @@ def send_email(
     msg.attach(MIMEText(html, 'html'))
 
     try:
-        if smtp_server in ["smtp.gmail.com", "smtp.office365.com", "smtp.mail.yahoo.com"]:
-            context = ssl.create_default_context()
-        else:
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-        
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls(context=context)
             server.login(sender_email, sender_password)
@@ -134,11 +142,13 @@ def send_email(
     except Exception as e:
         return False, str(e)
 
+
 # EMAIL VALIDATION FUNCTIONS
 def is_valid_syntax(email: str) -> bool:
     """Check if email has valid syntax."""
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
+
 
 def has_mx_record(domain: str) -> bool:
     """Check if domain has MX record with retry logic."""
@@ -151,7 +161,7 @@ def has_mx_record(domain: str) -> bool:
             resolver.nameservers = resolvers
             resolver.timeout = 5
             resolver.lifetime = 10
-            
+
             records = resolver.resolve(domain, 'MX')
             return bool(records)
         except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout):
@@ -165,6 +175,7 @@ def has_mx_record(domain: str) -> bool:
             time.sleep(1)
     return False
 
+
 def validate_email(email: str) -> str:
     """Comprehensive email validation."""
     if not is_valid_syntax(email):
@@ -176,17 +187,18 @@ def validate_email(email: str) -> str:
 
     return "Deliverable"
 
+
 async def process_csv_and_send_emails(
-    subjectForEmail: str,
-    csv_file_path: str,
-    sender_email: str,
-    sender_name: str,
-    sender_password: str,
-    smtp_server: str,
-    smtp_port: int,
-    template_content: str,
-    max_emails: int,
-    delay: int = 5
+        subjectForEmail: str,
+        csv_file_path: str,
+        sender_email: str,
+        sender_name: str,
+        sender_password: str,
+        smtp_server: str,
+        smtp_port: int,
+        template_content: str,
+        max_emails: int,
+        delay: int = 5
 ) -> tuple[list[dict], dict, Optional[str]]:
     """Process CSV file and send emails to authors."""
     results = []
@@ -202,7 +214,7 @@ async def process_csv_and_send_emails(
         with open(csv_file_path, 'r', encoding='utf-8') as file:
             reader = csv.DictReader(file)
             csv_rows = list(reader)
-            
+
             if max_emails == 0:
                 max_emails_actual = len(csv_rows)
             else:
@@ -216,7 +228,8 @@ async def process_csv_and_send_emails(
 
                 required_cols = ['name', 'emails', 'journal', 'article_title']
                 if not all(k in row for k in required_cols):
-                    raise ValueError(f"CSV row {i+1} is missing required columns. Expected: {', '.join(required_cols)}. Row data: {row}")
+                    raise ValueError(
+                        f"CSV row {i + 1} is missing required columns. Expected: {', '.join(required_cols)}. Row data: {row}")
 
                 name = row['name']
                 emails_str = row['emails']
@@ -294,6 +307,7 @@ async def process_csv_and_send_emails(
 
     return results, validation_stats, processing_error
 
+
 def display_summary(results: list[dict], validation_stats: dict) -> dict:
     """Generate a comprehensive summary dictionary of the email sending process."""
     summary = {}
@@ -325,6 +339,7 @@ def display_summary(results: list[dict], validation_stats: dict) -> dict:
 
     return summary
 
+
 # ====================================================================
 # Email Filter Functions
 # ====================================================================
@@ -334,6 +349,7 @@ def is_valid_syntax_filter(email):
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
+
 def has_mx_record_filter(domain):
     """Check if domain has MX record"""
     try:
@@ -341,6 +357,7 @@ def has_mx_record_filter(domain):
         return bool(records)
     except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout):
         return False
+
 
 def check_smtp_filter(email, sender_email):
     """Check if SMTP server accepts the email"""
@@ -361,6 +378,7 @@ def check_smtp_filter(email, sender_email):
     except Exception as e:
         return False
 
+
 def validate_email_filter(email, sender_email):
     if not is_valid_syntax_filter(email):
         return "Invalid syntax"
@@ -374,16 +392,17 @@ def validate_email_filter(email, sender_email):
     else:
         return "Non-deliverable"
 
+
 def process_csv_file_filter(input_path, sender_email, checkpoint_file=None):
     # Generate output filename
     base_name = os.path.basename(input_path)
     file_name, file_ext = os.path.splitext(base_name)
     output_path = f"filtered_{file_name}{file_ext}"
-    
+
     # Create checkpoint file if not provided
     if checkpoint_file is None:
         checkpoint_file = f"{file_name}_checkpoint.txt"
-    
+
     # Load checkpoint if exists
     processed_rows = 0
     if os.path.exists(checkpoint_file):
@@ -393,7 +412,7 @@ def process_csv_file_filter(input_path, sender_email, checkpoint_file=None):
                 print(f"Resuming from row {processed_rows}")
             except:
                 processed_rows = 0
-    
+
     print(f"Processing file: {input_path}")
     print(f"Output will be saved to: {output_path}")
     print(f"Checkpoint file: {checkpoint_file}")
@@ -403,7 +422,7 @@ def process_csv_file_filter(input_path, sender_email, checkpoint_file=None):
 
         reader = csv.DictReader(infile)
         fieldnames = reader.fieldnames
-        
+
         # Write header if starting fresh
         if processed_rows == 0:
             writer = csv.DictWriter(outfile, fieldnames=fieldnames)
@@ -423,7 +442,7 @@ def process_csv_file_filter(input_path, sender_email, checkpoint_file=None):
             email = row['emails'].strip()
 
             print(f"Validating email {total_rows}: {email}")
-            
+
             try:
                 result = validate_email_filter(email, sender_email)
                 print(f"Result: {result}")
@@ -442,11 +461,11 @@ def process_csv_file_filter(input_path, sender_email, checkpoint_file=None):
             if total_rows % 10 == 0:
                 with open(checkpoint_file, 'w') as f:
                     f.write(str(total_rows))
-                
+
                 # Progress indicator
                 print(f"Processed {total_rows} rows, {deliverable_rows} deliverable, {skipped_rows} skipped")
                 log_memory_usage()
-                
+
                 # Periodic garbage collection
                 if total_rows % 1000 == 0:
                     gc.collect()
@@ -463,6 +482,7 @@ def process_csv_file_filter(input_path, sender_email, checkpoint_file=None):
 
     return output_path
 
+
 # ====================================================================
 # Email Scraper Functions
 # ====================================================================
@@ -473,6 +493,7 @@ def extract_emails_scrape(text):
         return []
     email_pattern = r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b'
     return re.findall(email_pattern, text)
+
 
 def make_request_with_retry_scrape(url, max_retries=3, delay=1):
     """Make a request with retry logic"""
@@ -488,25 +509,26 @@ def make_request_with_retry_scrape(url, max_retries=3, delay=1):
             else:
                 raise
 
+
 def process_batch(batch_ids, details_url, unique_authors, max_authors, current_batch_num, total_batches):
     """Process a batch of article IDs"""
     details_response = make_request_with_retry_scrape(details_url)
-    
+
     try:
         root = ET.fromstring(details_response.text)
     except ET.ParseError as e:
         print(f"XML parsing error: {e}")
         return 0, 0  # Return zeros for counts
-    
+
     ns = {
         'pubmed': 'https://www.ncbi.nlm.nih.gov/pubmed/',
         'xsi': 'http://www.w3.org/2001/XMLSchema-instance'
     }
-    
+
     batch_emails_found = 0
     batch_duplicates_filtered = 0
     total_processed_in_batch = 0
-    
+
     for article in root.findall('.//PubmedArticle', ns):
         # Check if we've reached the maximum number of authors
         current_unique_count = len([k for k in unique_authors if isinstance(unique_authors[k], dict)])
@@ -560,12 +582,12 @@ def process_batch(batch_ids, details_url, unique_authors, max_authors, current_b
                         is_duplicate = True
                         batch_duplicates_filtered += 1
                         break
-                
+
                 if not is_duplicate:
                     # Add all emails to the tracking set
                     for email in emails:
                         unique_authors[email] = True
-                    
+
                     unique_authors[author_name] = {
                         'name': author_name,
                         'emails': emails,
@@ -580,10 +602,12 @@ def process_batch(batch_ids, details_url, unique_authors, max_authors, current_b
     # Calculate progress percentage
     current_total = len([k for k in unique_authors if isinstance(unique_authors[k], dict)])
     progress_percentage = min(100, int((current_total / max_authors) * 100))
-    
-    print(f"Batch {current_batch_num} | New: {batch_emails_found} | Dups: {batch_duplicates_filtered} | Total: {current_total}/{max_authors} | Progress: {progress_percentage}%")
-    
+
+    print(
+        f"Batch {current_batch_num} | New: {batch_emails_found} | Dups: {batch_duplicates_filtered} | Total: {current_total}/{max_authors} | Progress: {progress_percentage}%")
+
     return total_processed_in_batch, batch_emails_found
+
 
 def search_pubmed_authors_with_emails_scrape(search_term, max_authors=100000):
     """
@@ -625,30 +649,30 @@ def search_pubmed_authors_with_emails_scrape(search_term, max_authors=100000):
 
         # Process in smaller batches to avoid URL length issues
         batch_size = 200
-        
+
         for i in range(0, len(article_ids), batch_size):
             # Check if we've reached the maximum number of authors
             current_unique_count = len([k for k in unique_authors if isinstance(unique_authors[k], dict)])
             if current_unique_count >= max_authors:
                 print(f"\nReached maximum number of authors ({max_authors}). Stopping.")
                 break
-                
+
             batches_processed += 1
             current_batch = batches_processed
             print(f"\nStarting batch {current_batch}")
-            
+
             batch_ids = article_ids[i:i + batch_size]
-            
+
             # Create the URL for this batch
             details_url = f"{base_url}efetch.fcgi?db=pubmed&id={','.join(batch_ids)}&retmode=xml"
-            
+
             # Check URL length to avoid 414 errors
             if len(details_url) > 8000:
                 print(f"URL too long ({len(details_url)} chars), splitting into smaller batches")
                 sub_batch_size = batch_size // 2
                 if sub_batch_size < 10:
                     sub_batch_size = 10
-                
+
                 # Process this batch in smaller sub-batches
                 for j in range(0, len(batch_ids), sub_batch_size):
                     # Check if we've reached the maximum number of authors
@@ -656,20 +680,20 @@ def search_pubmed_authors_with_emails_scrape(search_term, max_authors=100000):
                     if current_unique_count >= max_authors:
                         print(f"\nReached maximum number of authors ({max_authors}). Stopping.")
                         break
-                        
+
                     sub_batch_ids = batch_ids[j:j + sub_batch_size]
                     sub_details_url = f"{base_url}efetch.fcgi?db=pubmed&id={','.join(sub_batch_ids)}&retmode=xml"
-                    
+
                     try:
                         processed_in_sub_batch, new_in_sub_batch = process_batch(
-                            sub_batch_ids, sub_details_url, unique_authors, max_authors, 
+                            sub_batch_ids, sub_details_url, unique_authors, max_authors,
                             current_batch, 0  # We don't need total_batches for sub-batches
                         )
                         total_processed += processed_in_sub_batch
                     except Exception as e:
                         print(f"Error processing sub-batch {j // sub_batch_size + 1}: {e}")
                         continue
-                    
+
                     # Check after each sub-batch
                     current_unique_count = len([k for k in unique_authors if isinstance(unique_authors[k], dict)])
                     if current_unique_count >= max_authors:
@@ -678,14 +702,14 @@ def search_pubmed_authors_with_emails_scrape(search_term, max_authors=100000):
             else:
                 try:
                     processed_in_batch, new_in_batch = process_batch(
-                        batch_ids, details_url, unique_authors, max_authors, 
+                        batch_ids, details_url, unique_authors, max_authors,
                         current_batch, 0  # We don't need total_batches for batches
                     )
                     total_processed += processed_in_batch
                 except Exception as e:
                     print(f"Error processing batch {current_batch}: {e}")
                     continue
-                
+
                 # Check after each batch
                 current_unique_count = len([k for k in unique_authors if isinstance(unique_authors[k], dict)])
                 if current_unique_count >= max_authors:
@@ -696,7 +720,7 @@ def search_pubmed_authors_with_emails_scrape(search_term, max_authors=100000):
         unique_authors_list = [unique_authors[key] for key in unique_authors if isinstance(unique_authors[key], dict)]
         unique_count = len(unique_authors_list)
         duplicate_count = total_processed - unique_count
-        
+
         # Calculate total unique emails
         all_emails = set()
         for author in unique_authors_list:
@@ -718,9 +742,8 @@ def search_pubmed_authors_with_emails_scrape(search_term, max_authors=100000):
     except Exception as e:
         print(f"Error searching PubMed: {e}")
         return []
-    
-    
-    
+
+
 def export_to_csv_scrape(data, filename):
     """Export author data to CSV file"""
     with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
@@ -742,6 +765,7 @@ def export_to_csv_scrape(data, filename):
     print(f"Data exported to {filename}")
     return filename
 
+
 # ====================================================================
 # FastAPI Routers
 # ====================================================================
@@ -750,18 +774,18 @@ def export_to_csv_scrape(data, filename):
 
 @app.post("/email-sender/send", summary="Process CSV and send emails")
 async def send_emails_endpoint(
-    csv_file: UploadFile = File(...),
-    email_template_file: UploadFile = File(...),
-    subjectForEmail: str = Form(...),
-    sender_email: EmailStr = Form(...),
-    sender_name: str = Form(...),
-    sender_password: str = Form(...),
-    smtp_server_option: str = Form(...),
-    custom_smtp_server: Optional[str] = Form(None),
-    smtp_port_option: str = Form(...),
-    custom_smtp_port: Optional[str] = Form(None),
-    max_emails: int = Form(...),
-    delay: int = Form(5),
+        csv_file: UploadFile = File(...),
+        email_template_file: UploadFile = File(...),
+        subjectForEmail: str = Form(...),
+        sender_email: EmailStr = Form(...),
+        sender_name: str = Form(...),
+        sender_password: str = Form(...),
+        smtp_server_option: str = Form(...),
+        custom_smtp_server: Optional[str] = Form(None),
+        smtp_port_option: str = Form(...),
+        custom_smtp_port: Optional[str] = Form(None),
+        max_emails: int = Form(...),
+        delay: int = Form(5),
 ):
     if not csv_file.filename or not csv_file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Please upload a valid CSV file.")
@@ -781,10 +805,12 @@ async def send_emails_endpoint(
             domain = sender_email.split('@')[1]
             smtp_server = f"smtp.{domain}"
         except IndexError:
-            raise HTTPException(status_code=400, detail="Invalid sender email format for 'Universal' SMTP server option.")
+            raise HTTPException(status_code=400,
+                                detail="Invalid sender email format for 'Universal' SMTP server option.")
     elif smtp_server_option == "other":
         if not custom_smtp_server:
-            raise HTTPException(status_code=400, detail="Custom SMTP server address is required when 'Other' is selected.")
+            raise HTTPException(status_code=400,
+                                detail="Custom SMTP server address is required when 'Other' is selected.")
         smtp_server = custom_smtp_server
     else:
         raise HTTPException(status_code=400, detail="Invalid SMTP server option.")
@@ -852,16 +878,15 @@ async def send_emails_endpoint(
             os.remove(temp_csv_file_path)
             print(f"Temporary CSV file removed: {temp_csv_file_path}")
 
+
 # Email Filter Router
-
-
 
 
 @app.post("/email-filter/process", summary="Process CSV and filter emails")
 async def filter_emails_endpoint(
-    csv_file: UploadFile = File(...),
-    sender_email: EmailStr = Form(...),
-    resume: bool = Form(False)
+        csv_file: UploadFile = File(...),
+        sender_email: EmailStr = Form(...),
+        resume: bool = Form(False)
 ):
     if not csv_file.filename or not csv_file.filename.lower().endswith('.csv'):
         raise HTTPException(status_code=400, detail="Please upload a valid CSV file.")
@@ -883,10 +908,10 @@ async def filter_emails_endpoint(
             base_name = os.path.basename(temp_csv_file_path)
             file_name, _ = os.path.splitext(base_name)
             checkpoint_file = f"{file_name}_checkpoint.txt"
-            
+
             if not os.path.exists(checkpoint_file):
                 raise HTTPException(status_code=400, detail="No checkpoint file found to resume from.")
-        
+
         # Process the CSV file to filter emails
         filtered_file_path = process_csv_file_filter(temp_csv_file_path, sender_email, checkpoint_file)
 
@@ -907,55 +932,55 @@ async def filter_emails_endpoint(
             os.remove(temp_csv_file_path)
             print(f"Temporary CSV file removed: {temp_csv_file_path}")
 
-# Email Scraper Router
 
+# Email Scraper Router
 
 
 @app.post("/email-scraper/scrape", summary="Scrape author emails from PubMed")
 async def scrape_emails_endpoint(
-    search_term: str = Form(...),
-    max_authors: int = Form(10000),
+        search_term: str = Form(...),
+        max_authors: int = Form(10000),
 ):
     try:
         # Scrape author data from PubMed
         authors_data = search_pubmed_authors_with_emails_scrape(search_term, max_authors)
-        
+
         if not authors_data:
             raise HTTPException(status_code=404, detail="No authors with emails found for the search term.")
-        
+
         # Calculate statistics
         unique_authors_count = len(authors_data)
-        
+
         # Calculate total unique emails
         all_emails = set()
         for author in authors_data:
             for email in author['emails']:
                 all_emails.add(email)
         total_unique_emails = len(all_emails)
-        
+
         # Generate a safe filename
         safe_filename = re.sub(r'[^\w\s-]', '', search_term).strip().replace(' ', '_')
         csv_filename = f"{safe_filename}_authors_with_emails.csv"
-        
+
         # Create a temporary file to store the CSV data
         with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.csv', newline='', encoding='utf-8') as tmp:
             # Export data to CSV
             export_to_csv_scrape(authors_data, tmp.name)
             temp_file_path = tmp.name
-        
+
         # Return the CSV file
         response = FileResponse(
             path=temp_file_path,
             filename=csv_filename,
             media_type='text/csv'
         )
-        
+
         # Add custom success message with statistics
         success_message = f"Successfully extracted {total_unique_emails} unique emails from {unique_authors_count} authors."
         response.headers["X-Success-Message"] = success_message
-        
+
         return response
-        
+
     except HTTPException as e:
         raise e
     except Exception as e:
