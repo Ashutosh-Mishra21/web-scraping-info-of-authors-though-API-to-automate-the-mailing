@@ -5,7 +5,9 @@
 {% endblock %}
 
 {% block hero_title %}<i class="bi bi-funnel"></i> Email Filter{% endblock %}
-{% block hero_subtitle %}Filter out invalid email addresses from your CSV files{% endblock %}
+{% block hero_subtitle %}Filter out invalid email addresses from your CSV files<br>This only gonna run in <b>Company
+    LAN</b><br>Cause many residential ISP's, public WIFI providers, and especially mobile carriers(for hotspots)
+<b>block outgoing connections on port 25</b>.{% endblock %}
 
 {% block content %}
 <div class="row">
@@ -21,12 +23,13 @@
             <div class="card-body p-4">
                 <form id="emailFilterForm" action="/email-filter/process" method="post" enctype="multipart/form-data">
                     <div class="mb-4">
-                        <h5 class="mb-3"><i class="bi bi-file-earmark-text"></i> Upload CSV File</h5>
+                        <h5 class="mb-3"><i class="bi bi-file-earmark-text"></i> Upload Data File</h5>
                         <div class="mb-3">
                             <label for="csv_file" class="form-label required-field">CSV File</label>
-                            <input type="file" class="form-control" id="csv_file" name="csv_file" accept=".csv"
-                                required>
-                            <div class="form-text">Must contain a column named 'emails'</div>
+                            <input type="file" class="form-control" id="csv_file" name="csv_file"
+                                accept=".csv,.xlsx,.xls,.xlsn,.xlsb,.xltm,.xltx" required>
+                            <div class="form-text">Must contain a column named 'emails', . and the acceptable
+                                extensions: .csv,.xlsx,.xls,.xlsn,.xlsb,.xltm,.xltx</div>
                         </div>
                     </div>
 

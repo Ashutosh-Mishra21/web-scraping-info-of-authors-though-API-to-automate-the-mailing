@@ -3,7 +3,6 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from pydantic import EmailStr
 from typing import Annotated, Literal, Optional, List, Dict
-import random
 
 from pydantic import BaseModel, Field, field_validator, computed_field, AnyUrl, EmailStr
 import requests
@@ -18,14 +17,14 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 import re
-import os, gc
-import pandas as pd
+import os
 import dns.resolver
 from datetime import datetime
 import tempfile
 import shutil
 import gc
 import psutil
+import socket
 
 from dotenv import load_dotenv
 load_dotenv()
@@ -90,16 +89,55 @@ def log_memory_usage():
 # ====================================================================
 # Email Sending and Validation Functions
 # ====================================================================
-def render_template(rand_template_content: str, row: dict) -> str:
-    def replacer(match):
-        key = match.group(1)
-        return str(row.get(key, "{" + key + "}"))
-    return re.sub(r"{(\w+)}", replacer, rand_template_content)
 
+# def send_email(
+#     row: Dict,  
+#     subjectForEmail: str,
+#     sender_email: str,
+#     sender_name: str,
+#     sender_password: str,
+#     recipient_name: str,
+#     recipient_email: str,
+#     smtp_server: str,
+#     smtp_port: int,
+#     template_content: str
+# ) -> tuple[bool, str]:
+#     """Send a personalized email to an author using HTML template."""
+#     html = template_content.format(**row)
+#     formatted_subject = subjectForEmail.format(**row)
+
+#     msg = MIMEMultipart('alternative')
+#     msg['Subject'] = formatted_subject
+#     msg['From'] = formataddr((sender_name, sender_email))
+#     msg['To'] = formataddr((recipient_name, recipient_email))
+#     msg.attach(MIMEText(html, 'html'))
+    
+
+#     try:
+#         if smtp_server in ["smtp.gmail.com", "smtp.office365.com", "smtp.mail.yahoo.com"]:
+#             context = ssl.create_default_context()
+#         else:
+#             context = ssl.create_default_context()
+#             context.check_hostname = False
+#             context.verify_mode = ssl.CERT_NONE
+        
+#         with smtplib.SMTP(smtp_server, smtp_port) as server:
+#             server.starttls(context=context)
+#             server.login(sender_email, sender_password)
+#             server.sendmail(sender_email, recipient_email, msg.as_string())
+#         return True, "Email sent successfully"
+#     except smtplib.SMTPAuthenticationError:
+#         return False, "Authentication failed. Check your email and password."
+#     except smtplib.SMTPConnectError as e:
+#         return False, f"Could not connect to SMTP server '{smtp_server}:{smtp_port}': {e}"
+#     except smtplib.SMTPRecipientsRefused:
+#         return False, "Recipient email address refused by the SMTP server."
+#     except Exception as e:
+#         return False, str(e)
 
 def send_email(
-    row: Dict,  
-    rand_subjectForEmail: str,
+    row: Dict,
+    subjectForEmail: str,
     sender_email: str,
     sender_name: str,
     sender_password: str,
@@ -107,40 +145,53 @@ def send_email(
     recipient_email: str,
     smtp_server: str,
     smtp_port: int,
-    rand_template_content: str
+    template_content: str
 ) -> tuple[bool, str]:
     """Send a personalized email to an author using HTML template."""
-    html = render_template(rand_template_content, row)
-    formatted_subject = rand_subjectForEmail.format(**row)
+    html = template_content.format(**row)
+    formatted_subject = subjectForEmail.format(**row)
 
     msg = MIMEMultipart('alternative')
     msg['Subject'] = formatted_subject
     msg['From'] = formataddr((sender_name, sender_email))
     msg['To'] = formataddr((recipient_name, recipient_email))
     msg.attach(MIMEText(html, 'html'))
-    
 
     try:
-        if smtp_server in ["smtp.gmail.com", "smtp.office365.com", "smtp.mail.yahoo.com"]:
-            context = ssl.create_default_context()
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
+        if smtp_port == 465:
+            print("inside 465")
+            # Use SMTPS for implicit SSL on port 465
+            with smtplib.SMTP_SSL(smtp_server, smtp_port, context=context) as server:
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, recipient_email, msg.as_string())
         else:
-            context = ssl.create_default_context()
-            context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
-        
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls(context=context)
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, recipient_email, msg.as_string())
+            # Use SMTP for STARTTLS on other ports (like 587, 25)
+            with smtplib.SMTP(smtp_server, smtp_port) as server:
+                server.starttls(context=context)
+                server.login(sender_email, sender_password)
+                server.sendmail(sender_email, recipient_email, msg.as_string())
+
         return True, "Email sent successfully"
     except smtplib.SMTPAuthenticationError:
-        return False, "Authentication failed. Check your email and password."
+        return False, "Authentication failed. Check your email and password. For services like Gmail or Outlook with 2FA, you might need to use an App-Specific Password instead of your regular password."
     except smtplib.SMTPConnectError as e:
-        return False, f"Could not connect to SMTP server '{smtp_server}:{smtp_port}': {e}"
+        return False, f"Could not connect to SMTP server '{smtp_server}:{smtp_port}'. Please check the server address and port, and ensure they are accessible from where this application is hosted. Error: {e}"
     except smtplib.SMTPRecipientsRefused:
-        return False, "Recipient email address refused by the SMTP server."
+        return False, "Recipient email address refused by the SMTP server. This could be due to an invalid recipient email, or the sender's email (yours) being blocked or having misconfigured SPF/DKIM/DMARC records."
+    except smtplib.SMTPServerDisconnected as e:
+        return False, f"SMTP server disconnected unexpectedly. This can happen with incorrect server/port settings, or if the server closes the connection due to security policy or activity. Error: {e}"
+    except ssl.SSLError as e:
+        return False, f"SSL/TLS error during connection. This might indicate issues with the server's security certificate, an unsupported TLS version, or a handshake failure. Error: {e}"
+    except ConnectionRefusedError:
+        return False, f"Connection refused by the SMTP server at '{smtp_server}:{smtp_port}'. This often means the server is not running, or a firewall is blocking the connection from your end."
+    except socket.gaierror as e: # Catch "getaddress" (hostname resolution) errors
+        return False, f"Hostname resolution error for SMTP server '{smtp_server}'. The server address might be incorrect or there could be a DNS issue. Error: {e}"
     except Exception as e:
-        return False, str(e)
+        return False, f"An unexpected error occurred during email sending: {e}. Please review your SMTP settings or try again."
 
 # EMAIL VALIDATION FUNCTIONS
 def is_valid_syntax(email: str) -> bool:
@@ -185,19 +236,18 @@ def validate_email(email: str) -> str:
     return "Deliverable"
 
 async def process_csv_and_send_emails(
-    subjectForEmail: List,
-    csv_file_path: str, 
+    subjectForEmail: str,
+    csv_file_path: str,
     sender_email: str,
     sender_name: str,
     sender_password: str,
     smtp_server: str,
     smtp_port: int,
-    template_content: List,
+    template_content: str,
     max_emails: int,
-    delay: int = 5,
-    original_file_extension: str = '.csv'
-) -> tuple[list[dict], dict, Optional[str], Optional[pd.DataFrame]]:
-    """Process data file (CSV/Excel) and send emails to authors."""
+    delay: int = 5
+) -> tuple[list[dict], dict, Optional[str]]:
+    """Process CSV file and send emails to authors."""
     results = []
     validation_stats = {
         "valid_syntax": 0,
@@ -206,148 +256,95 @@ async def process_csv_and_send_emails(
         "failed_validation": 0
     }
     processing_error = None
-    df = None
 
     try:
-        # Use pandas to read the file based on its extension
-        if original_file_extension.lower() == '.csv':
-            # Try reading with common encodings if 'utf-8' fails
-            try:
-                df = pd.read_csv(csv_file_path, encoding='utf-8')
-            except UnicodeDecodeError:
-                print(f"UTF-8 decode failed for {csv_file_path}, trying 'latin1'...")
-                try:
-                    df = pd.read_csv(csv_file_path, encoding='latin1')
-                except UnicodeDecodeError:
-                    print(f"Latin1 decode failed for {csv_file_path}, trying 'cp1252'...")
-                    df = pd.read_csv(csv_file_path, encoding='cp1252') # Common for Windows-saved CSVs
-            except Exception as e:
-                raise ValueError(f"Could not read CSV file {csv_file_path}: {e}")
-        elif original_file_extension.lower() in ['.xlsx', '.xls', '.xlsn', '.xlsb', '.xltm', '.xltx']:
-            # pandas read_excel can handle different Excel formats
-            df = pd.read_excel(csv_file_path)
-        else:
-            raise ValueError(f"Unsupported file type for processing: {original_file_extension}. Only CSV and Excel files are supported.")
-
-        if df.empty:
-            raise ValueError("The uploaded data file is empty or could not be parsed.")
-
-        # Convert DataFrame to a list of dictionaries for consistent row access
-        csv_rows = df.to_dict('records')
-
-        if max_emails == 0:
-            max_emails_actual = len(csv_rows)
-        else:
-            max_emails_actual = min(max_emails, len(csv_rows))
-
-        print(f"\nStarting to process {max_emails_actual} emails with {delay} second delays...")
-
-        processed_indices = [] # Keep track of original DataFrame indices of processed rows
-
-        for i, row in enumerate(csv_rows):
-            # i here is the index in csv_rows (list of dicts), which corresponds to the DataFrame index
-            if i >= max_emails_actual:
-                break
-
-            required_cols = ['name', 'emails']
-            if not all(k in row for k in required_cols):
-                # Using the original DataFrame index + 1 for user-friendly error message
-                raise ValueError(f"Row {df.index[i]+1} in the data file is missing required columns. Expected: {', '.join(required_cols)}. Row data: {row}")
+        with open(csv_file_path, 'r', encoding='utf-8') as file:
+            reader = csv.DictReader(file)
+            csv_rows = list(reader)
             
-            name = row['name']
-            emails = row['emails']
-            
-            # Ensure 'emails' is treated as a string before splitting
-            emails_list = [e.strip() for e in str(emails).split(';') if e.strip()]
+            if max_emails == 0:
+                max_emails_actual = len(csv_rows)
+            else:
+                max_emails_actual = len(csv_rows) if max_emails is None else min(max_emails, len(csv_rows))
 
-            print(f"\nProcessing row {i + 1}/{max_emails_actual}: {name}")
+            print(f"\nStarting to process {max_emails_actual} emails with {delay} second delays...")
 
-            row_had_any_email_attempted = False # Flag to mark if any email from this row was attempted
-            for email in emails_list:
-                if not email:
-                    continue
+            for i, row in enumerate(csv_rows):
+                if i >= max_emails_actual:
+                    break
+
+                required_cols = ['name', 'emails']
+                if not all(k in row for k in required_cols):
+                    raise ValueError(f"CSV row {i+1} is missing required columns. Expected: {', '.join(required_cols)}. Row data: {row}")
                 
-                row_had_any_email_attempted = True
+                name = row['name']
+                emails = row['emails']
+                
+                emails_list = [e.strip() for e in emails.split(';') if e.strip()]
 
-                print(f"  Validating: {email}")
-                validation_result_msg = validate_email(email)
+                print(f"\nProcessing row {i + 1}/{max_emails_actual}: {name}")
 
-                if validation_result_msg == "Invalid syntax":
-                    validation_stats["failed_validation"] += 1
-                elif validation_result_msg == "Domain not found / no MX record":
-                    validation_stats["failed_validation"] += 1
-                elif validation_result_msg == "Deliverable":
-                    validation_stats["deliverable"] += 1
-                    validation_stats["has_mx"] += 1
-                    validation_stats["valid_syntax"] += 1
-                else: # Catch-all for other validation failures
-                    validation_stats["failed_validation"] += 1
+                for email in emails_list:
+                    if not email:
+                        continue
 
-                if validation_result_msg != "Deliverable":
-                    print(f"    ✗ Skipped - {validation_result_msg}")
-                    results.append({
+                    print(f"  Validating: {email}")
+                    validation_result_msg = validate_email(email)
+
+                    if validation_result_msg == "Invalid syntax":
+                        validation_stats["failed_validation"] += 1
+                    elif validation_result_msg == "Domain not found / no MX record":
+                        validation_stats["failed_validation"] += 1
+                    elif validation_result_msg == "Deliverable":
+                        validation_stats["deliverable"] += 1
+                        validation_stats["has_mx"] += 1
+                        validation_stats["valid_syntax"] += 1
+                    else:
+                        validation_stats["failed_validation"] += 1
+
+                    if validation_result_msg != "Deliverable":
+                        print(f"    ✗ Skipped - {validation_result_msg}")
+                        results.append({
+                            'name': name,
+                            'email': email,
+                            'success': False,
+                            'message': f"Validation failed: {validation_result_msg}"
+                        })
+                        continue
+
+                    print(f"    ✓ Valid - Attempting to send email to {email} via {smtp_server}:{smtp_port}...")
+
+                    success, message = send_email(
+                        row, subjectForEmail, sender_email, sender_name, sender_password, name, email, smtp_server, smtp_port, template_content
+                    )
+
+                    result = {
                         'name': name,
                         'email': email,
-                        'success': False,
-                        'message': f"Validation failed: {validation_result_msg}"
-                    })
-                    continue
+                        'success': success,
+                        'message': message
+                    }
+                    results.append(result)
 
-                print(f"    ✓ Valid - Attempting to send email to {email} via {smtp_server}:{smtp_port}...")
-                filename, rand_template_content = random.choice(template_content)
-                print(f"    Using template: {filename}")
-                
-                rand_subjectForEmail = random.choice(subjectForEmail)
-                print(f"    Using subject: {rand_subjectForEmail}")
+                    if success:
+                        print(f"    ✓ Email sent successfully to {email}")
+                    else:
+                        print(f"    ✗ Failed to send to {email}: {message}")
 
-                success, message = send_email(
-                    row, rand_subjectForEmail, sender_email, sender_name, sender_password, name, email, smtp_server, smtp_port, rand_template_content
-                )
-
-                result = {
-                    'name': name,
-                    'email': email,
-                    'success': success,
-                    'message': message
-                }
-                results.append(result)
-
-                if success:
-                    print(f"    ✓ Email sent successfully to {email}")
-                else:
-                    print(f"    ✗ Failed to send to {email}: {message}")
-            
-            # If any email from this row was processed (attempted to send after validation)
-            # then mark this row as processed to remove it from the remaining DataFrame.
-            if row_had_any_email_attempted:
-                 processed_indices.append(df.index[i]) # Get the original DataFrame index
-
-            if i < max_emails_actual - 1 and delay > 0:
-                print(f"\nWaiting {delay} seconds before processing next row...")
-                time.sleep(delay)
-
-        # Create a DataFrame of remaining rows by dropping the processed ones
-        if df is not None:
-            # Drop rows by their original indices
-            remaining_df = df.drop(index=processed_indices)
-            remaining_df = remaining_df.reset_index(drop=True) # Reset index for a clean DataFrame
-        else:
-            remaining_df = pd.DataFrame() # Return empty DataFrame if df was never initialized
+                if i < max_emails_actual - 1 and delay > 0:
+                    print(f"\nWaiting {delay} seconds before processing next row...")
+                    time.sleep(delay)
 
     except FileNotFoundError:
-        processing_error = f"Data file not found at {csv_file_path}"
-        remaining_df = pd.DataFrame()
+        processing_error = f"CSV file not found at {csv_file_path}"
     except KeyError as e:
-        processing_error = f"Missing expected column in data file: {e}. Ensure file has 'name' and 'emails'."
-        remaining_df = pd.DataFrame()
+        processing_error = f"Missing expected CSV column: {e}. Ensure CSV has 'name', 'emails'."
     except ValueError as e:
-        processing_error = f"Data processing error: {e}"
-        remaining_df = pd.DataFrame()
+        processing_error = f"CSV data error: {e}"
     except Exception as e:
-        processing_error = f"An unexpected error occurred during data processing or email sending: {e}"
-        remaining_df = pd.DataFrame()
+        processing_error = f"An unexpected error occurred during CSV processing or email sending: {e}"
 
-    return results, validation_stats, processing_error, remaining_df
+    return results, validation_stats, processing_error
 
 def display_summary(results: list[dict], validation_stats: dict) -> dict:
     """Generate a comprehensive summary dictionary of the email sending process."""
@@ -429,163 +426,91 @@ def validate_email_filter(email, sender_email):
     else:
         return "Non-deliverable"
 
-def process_csv_file_filter(input_path: str, sender_email: str, checkpoint_file: str = None) -> str:
-    """
-    Processes a CSV or Excel file, filters emails based on validation,
-    and saves deliverable emails to a new CSV. Supports resuming processing from a checkpoint.
-
-    Args:
-        input_path (str): The path to the input CSV or Excel file.
-        sender_email (str): The sender email to be used in validation logic.
-        checkpoint_file (str, optional): Path to a checkpoint file for resuming.
-                                         If None, a default filename will be generated.
-
-    Returns:
-        str: The path to the filtered output CSV file.
-
-    Raises:
-        HTTPException: If the file cannot be read, lacks an 'emails' column, or is an unsupported type.
-    """
-    
+def process_csv_file_filter(input_path, sender_email, checkpoint_file=None):
+    # Generate output filename
     base_name = os.path.basename(input_path)
     file_name, file_ext = os.path.splitext(base_name)
-    output_path = f"filtered_{file_name}.csv" # Filtered output is always a CSV
-
+    output_path = f"filtered_{file_name}{file_ext}"
+    
+    # Create checkpoint file if not provided
     if checkpoint_file is None:
         checkpoint_file = f"{file_name}_checkpoint.txt"
-
-    initial_processed_rows_from_checkpoint = 0
+    
+    # Load checkpoint if exists
+    processed_rows = 0
     if os.path.exists(checkpoint_file):
         with open(checkpoint_file, 'r') as f:
             try:
-                initial_processed_rows_from_checkpoint = int(f.read().strip())
-                print(f"Resuming from row {initial_processed_rows_from_checkpoint} based on checkpoint.")
-            except ValueError: # Handle cases where checkpoint file might be empty or malformed
-                initial_processed_rows_from_checkpoint = 0
-                print(f"Checkpoint file corrupted or empty, starting processing from row 0.")
+                processed_rows = int(f.read().strip())
+                print(f"Resuming from row {processed_rows}")
+            except:
+                processed_rows = 0
     
-    # Counters for the current processing session
-    deliverable_rows_current_session = 0
-    skipped_rows_current_session = 0
-
     print(f"Processing file: {input_path}")
     print(f"Output will be saved to: {output_path}")
     print(f"Checkpoint file: {checkpoint_file}")
 
-    df = None
-    # Common encodings to try for CSV files
-    encodings_to_try = ['utf-8', 'latin-1', 'cp1252'] 
+    with open(input_path, 'r', newline='', encoding='utf-8') as infile, \
+            open(output_path, 'a' if processed_rows > 0 else 'w', newline='', encoding='utf-8') as outfile:
 
-    # Attempt to read the input file using pandas
-    if file_ext.lower() == '.csv':
-        for encoding in encodings_to_try:
-            try:
-                # pandas' encoding_errors='ignore' helps with decoding issues directly
-                df = pd.read_csv(input_path, encoding=encoding, encoding_errors='ignore')
-                print(f"Successfully read CSV file with encoding: {encoding}")
-                break # Exit loop if reading is successful
-            except Exception as e:
-                print(f"Failed to read CSV with encoding {encoding}: {e}")
-                df = None # Ensure df is None if current encoding attempt fails
-        if df is None: # If all CSV encoding attempts failed
-            raise HTTPException(status_code=400, detail="Could not read the CSV file with any common encoding. Please check file encoding.")
-    elif file_ext.lower() in ['.xlsx', '.xls', '.xlsn', '.xlsb', '.xltm', '.xltx']:
-        try:
-            df = pd.read_excel(input_path)
-            print(f"Successfully read Excel file.")
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Could not read the Excel file: {e}. Please ensure it's a valid Excel format.")
-    else:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {file_ext}. Only CSV and Excel files are supported.")
-    
-    if 'emails' not in df.columns:
-        raise HTTPException(status_code=400, detail="The input file must contain an 'emails' column.")
-
-    deliverable_rows_list_for_this_session = [] # To store new deliverable rows processed in this session
-
-    # Determine overall counts (from previous runs + current run)
-    overall_deliverable_count_at_start = 0
-    overall_skipped_count_at_start = 0
-
-    if initial_processed_rows_from_checkpoint > 0 and os.path.exists(output_path):
-        try:
-            existing_filtered_df = pd.read_csv(output_path, encoding='utf-8')
-            overall_deliverable_count_at_start = len(existing_filtered_df)
-            # Estimate skipped rows from checkpoint, assuming consistency
-            overall_skipped_count_at_start = initial_processed_rows_from_checkpoint - overall_deliverable_count_at_start
-            if overall_skipped_count_at_start < 0: # Safety check for potential inconsistencies
-                overall_skipped_count_at_start = 0
-            print(f"Restored: {overall_deliverable_count_at_start} deliverable rows and estimated {overall_skipped_count_at_start} skipped rows from previous runs.")
-        except Exception as e:
-            print(f"Warning: Could not read existing filtered file {output_path} to restore counts: {e}. Starting deliverable/skipped count from 0 for previous runs.")
-
-    total_rows_in_input = len(df)
-
-    # Iterate only over the rows that haven't been processed yet
-    # `index` here is the original 0-based index from the DataFrame
-    for index, row in df.iloc[initial_processed_rows_from_checkpoint:].iterrows():
-        current_global_row_number = index + 1 # 1-based row number for user-friendly progress/checkpointing
-
-        # Ensure 'emails' column value is a string; handles potential NaN gracefully
-        email = str(row['emails']).strip() 
+        reader = csv.DictReader(infile)
+        fieldnames = reader.fieldnames
         
-        try:
-            result = validate_email_filter(email, sender_email)
+        # Write header if starting fresh
+        if processed_rows == 0:
+            writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+            writer.writeheader()
+        else:
+            writer = csv.DictWriter(outfile, fieldnames=fieldnames)
+            # Skip already processed rows
+            for _ in range(processed_rows):
+                next(reader)
 
-            if result == "Deliverable":
-                deliverable_rows_list_for_this_session.append(row.to_dict())
-                deliverable_rows_current_session += 1
-            else:
-                skipped_rows_current_session += 1
-        except Exception as e:
-            print(f"Error validating email at row {current_global_row_number} (email: '{email}'): {e}")
-            skipped_rows_current_session += 1
-            continue
+        total_rows = processed_rows
+        deliverable_rows = 0
+        skipped_rows = 0
 
-        # Update checkpoint every 10 rows for progress
-        if current_global_row_number % 10 == 0:
-            with open(checkpoint_file, 'w') as f:
-                f.write(str(current_global_row_number))
+        for row in reader:
+            total_rows += 1
+            email = row['emails'].strip()
+
+            print(f"Validating email {total_rows}: {email}")
             
-            current_total_deliverable = overall_deliverable_count_at_start + deliverable_rows_current_session
-            current_total_skipped = overall_skipped_count_at_start + skipped_rows_current_session
-            print(f"Progress: Processed {current_global_row_number}/{total_rows_in_input} rows. Deliverable (Total): {current_total_deliverable}, Skipped (Total): {current_total_skipped}")
-            log_memory_usage()
-            
-            if current_global_row_number % 1000 == 0:
-                gc.collect()
+            try:
+                result = validate_email_filter(email, sender_email)
+                print(f"Result: {result}")
 
-    # Final checkpoint save: indicates all rows in the input file have been processed
-    with open(checkpoint_file, 'w') as f:
-        f.write(str(total_rows_in_input))
+                if result == "Deliverable":
+                    writer.writerow(row)
+                    deliverable_rows += 1
+                else:
+                    skipped_rows += 1
+            except Exception as e:
+                print(f"Error validating {email}: {e}")
+                skipped_rows += 1
+                continue
 
-    # Convert the list of new deliverable rows from this session to a DataFrame
-    new_deliverable_df = pd.DataFrame(deliverable_rows_list_for_this_session)
+            # Update checkpoint every 10 rows
+            if total_rows % 10 == 0:
+                with open(checkpoint_file, 'w') as f:
+                    f.write(str(total_rows))
+                
+                # Progress indicator
+                print(f"Processed {total_rows} rows, {deliverable_rows} deliverable, {skipped_rows} skipped")
+                log_memory_usage()
+                
+                # Periodic garbage collection
+                if total_rows % 1000 == 0:
+                    gc.collect()
 
-    # Save the filtered data to the output CSV file
-    if initial_processed_rows_from_checkpoint == 0: # If starting fresh (no resume or checkpoint invalid)
-        if not new_deliverable_df.empty:
-            new_deliverable_df.to_csv(output_path, index=False, encoding='utf-8')
-        elif os.path.exists(output_path): # If no deliverable rows in this run, and output file exists, clear it.
-            os.remove(output_path) 
-    else: # Resuming from a checkpoint
-        if not new_deliverable_df.empty:
-            # Determine if header needs to be written. If file doesn't exist or is empty, write header.
-            append_header = not os.path.exists(output_path) or os.path.getsize(output_path) == 0
-            new_deliverable_df.to_csv(output_path, mode='a', header=append_header, index=False, encoding='utf-8')
-
-    # Clean up checkpoint file when done, as processing is complete for this file
+    # Clean up checkpoint file when done
     if os.path.exists(checkpoint_file):
         os.remove(checkpoint_file)
 
-    # Final summary calculations
-    final_deliverable_count = overall_deliverable_count_at_start + deliverable_rows_current_session
-    final_skipped_count = overall_skipped_count_at_start + skipped_rows_current_session
-
     print(f"\nProcessing complete!")
-    print(f"Total rows in input file: {total_rows_in_input}")
-    print(f"Deliverable emails found (Total): {final_deliverable_count}")
-    print(f"Skipped emails (Total): {final_skipped_count}")
+    print(f"Total rows processed: {total_rows}")
+    print(f"Deliverable emails found: {deliverable_rows}")
+    print(f"Skipped emails: {skipped_rows}")
     print(f"Filtered file saved as: {output_path}")
 
     return output_path
@@ -875,11 +800,68 @@ def export_to_csv_scrape(data, filename):
 
 # Email Sender Router
 
+# @app.post("/email-sender/send", summary="Process CSV and send emails")
+# async def send_emails_endpoint(
+#     csv_file: UploadFile = File(...),
+#     email_template_file: UploadFile = File(...),
+#     subjectForEmail: str = Form(...),
+#     sender_email: EmailStr = Form(...),
+#     sender_name: str = Form(...),
+#     sender_password: str = Form(...),
+#     smtp_server_option: str = Form(...),
+#     custom_smtp_server: Optional[str] = Form(None),
+#     smtp_port_option: str = Form(...),
+#     custom_smtp_port: Optional[str] = Form(None),
+#     max_emails: int = Form(...),
+#     delay: int = Form(5),
+# ):
+#     if not csv_file.filename or not csv_file.filename.lower().endswith('.csv'):
+#         raise HTTPException(status_code=400, detail="Please upload a valid CSV file.")
+#     if not email_template_file.filename or not email_template_file.filename.lower().endswith('.html'):
+#         raise HTTPException(status_code=400, detail="Please upload a valid HTML email template file.")
+
+#     # Determine SMTP Server
+#     smtp_server = ""
+#     if smtp_server_option == "gmail":
+#         smtp_server = "smtp.gmail.com"
+#     elif smtp_server_option == "outlook":
+#         smtp_server = "smtp.office365.com"
+#     elif smtp_server_option == "yahoo":
+#         smtp_server = "smtp.mail.yahoo.com"
+#     elif smtp_server_option == "universal":
+#         try:
+#             domain = sender_email.split('@')[1]
+#             smtp_server = f"smtp.{domain}"
+#         except IndexError:
+#             raise HTTPException(status_code=400, detail="Invalid sender email format for 'Universal' SMTP server option.")
+#     elif smtp_server_option == "other":
+#         if not custom_smtp_server:
+#             raise HTTPException(status_code=400, detail="Custom SMTP server address is required when 'Other' is selected.")
+#         smtp_server = custom_smtp_server
+#     else:
+#         raise HTTPException(status_code=400, detail="Invalid SMTP server option.")
+
+#     # Determine SMTP Port
+#     smtp_port = 0
+#     if smtp_port_option == "587":
+#         smtp_port = 587
+#     elif smtp_port_option == "465":
+#         smtp_port = 465
+#     elif smtp_port_option == "25":
+#         smtp_port = 25
+#     elif smtp_port_option == "other":
+#         if custom_smtp_port is None:
+#             raise HTTPException(status_code=400, detail="Custom SMTP port is required when 'Other' is selected.")
+#         smtp_port = custom_smtp_port
+#     else:
+#         raise HTTPException(status_code=400, detail="Invalid SMTP port option.")
+
+
 @app.post("/email-sender/send", summary="Process CSV and send emails")
 async def send_emails_endpoint(
     csv_file: UploadFile = File(...),
-    email_template_files: List[UploadFile] = File(...),
-    subjectForEmail:  List[str] = Form(...),
+    email_template_file: UploadFile = File(...),
+    subjectForEmail: str = Form(...),
     sender_email: EmailStr = Form(...),
     sender_name: str = Form(...),
     sender_password: str = Form(...),
@@ -890,14 +872,10 @@ async def send_emails_endpoint(
     max_emails: int = Form(...),
     delay: int = Form(5),
 ):
-    # Allowed file extensions for data file
-    allowed_data_extensions = ('.csv','.xlsx','.xls','.xlsn','.xlsb','.xltm','.xltx')
-    if not csv_file.filename or not csv_file.filename.lower().endswith(allowed_data_extensions):
-        raise HTTPException(status_code=400, detail=f"Please upload a valid data file. Allowed types: {', '.join(allowed_data_extensions)}.")
-    templates = []
-
-    if not email_template_files:
-        raise HTTPException(status_code=400, detail="No template files were uploaded.")
+    if not csv_file.filename or not csv_file.filename.lower().endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Please upload a valid CSV file.")
+    if not email_template_file.filename or not email_template_file.filename.lower().endswith('.html'):
+        raise HTTPException(status_code=400, detail="Please upload a valid HTML email template file.")
 
     # Determine SMTP Server
     smtp_server = ""
@@ -910,7 +888,30 @@ async def send_emails_endpoint(
     elif smtp_server_option == "universal":
         try:
             domain = sender_email.split('@')[1]
-            smtp_server = f"smtp.{domain}"
+            try:
+                # Attempt to resolve MX records first for robustness
+                mx_records = dns.resolver.resolve(domain, 'MX')
+                # Take the primary MX record (lowest preference) and remove trailing dot
+                smtp_server = str(mx_records[0].exchange).rstrip('.')
+                print(f"Determined SMTP server for {domain} via MX record: {smtp_server}")
+            except (dns.resolver.NoAnswer, dns.resolver.NXDOMAIN, dns.resolver.Timeout):
+                print(f"No MX record found for {domain}, attempting common SMTP patterns.")
+                # Fallback to common patterns if no MX record is found
+                if "gmail.com" in domain:
+                    smtp_server = "smtp.gmail.com"
+                elif any(d in domain for d in ["outlook.com", "hotmail.com", "live.com"]):
+                    smtp_server = "smtp.office365.com"
+                elif "yahoo.com" in domain:
+                    smtp_server = "smtp.mail.yahoo.com"
+                else:
+                    # Generic fallback; for many smaller hosts, smtp.domain or mail.domain works
+                    # If this still fails, the user will need to use 'Other'
+                    smtp_server = f"smtp.{domain}"
+                print(f"Guessed SMTP server for {domain}: {smtp_server}")
+
+            if not smtp_server:
+                 raise HTTPException(status_code=400, detail=f"Could not automatically determine SMTP server for '{domain}'. Please use 'Other' option to specify it manually.")
+
         except IndexError:
             raise HTTPException(status_code=400, detail="Invalid sender email format for 'Universal' SMTP server option.")
     elif smtp_server_option == "other":
@@ -929,143 +930,52 @@ async def send_emails_endpoint(
     elif smtp_port_option == "25":
         smtp_port = 25
     elif smtp_port_option == "other":
-        if custom_smtp_port is None:
+        if not custom_smtp_port: # Use 'not custom_smtp_port' to catch empty strings
             raise HTTPException(status_code=400, detail="Custom SMTP port is required when 'Other' is selected.")
         try:
-            smtp_port = int(custom_smtp_port)
+            smtp_port = int(custom_smtp_port) # Convert to int
         except ValueError:
             raise HTTPException(status_code=400, detail="Custom SMTP port must be a valid integer.")
     else:
         raise HTTPException(status_code=400, detail="Invalid SMTP port option.")
 
-    temp_data_file_path = None 
+    temp_csv_file_path = None
+    email_template_content = None
 
     try:
         # Read uploaded email template content
-        for file in email_template_files:
-            try:
-                if not file.filename.lower().endswith(".html"):
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Invalid file type: {file.filename}. Only .html files are allowed."
-                    )
+        email_template_content = (await email_template_file.read()).decode('utf-8')
 
-                content_bytes = await file.read()
-                try:
-                    content_str = content_bytes.decode("utf-8")
-                except UnicodeDecodeError:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Failed to decode {file.filename}. Ensure it's saved as UTF-8."
-                    )
-
-                if not content_str.strip():
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Template file {file.filename} is empty."
-                    )
-
-                templates.append((file.filename, content_str))
-
-            except HTTPException:
-                # Re-raise FastAPI specific errors
-                raise
-            except Exception as e:
-                raise HTTPException(
-                    status_code=500,
-                    detail=f"Unexpected error while processing {file.filename}: {str(e)}"
-                )
-
-        if not templates:
-            raise HTTPException(status_code=400, detail="No valid HTML templates found in uploaded folder.")
-
-
-        # Save the uploaded data file to a temporary file
-        original_filename = csv_file.filename
-        file_extension = os.path.splitext(original_filename)[1]
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
+        # Save the uploaded CSV to a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
             shutil.copyfileobj(csv_file.file, tmp)
-            temp_data_file_path = tmp.name
+            temp_csv_file_path = tmp.name
 
-        print(f"Uploaded data file saved temporarily to: {temp_data_file_path}")
+        print(f"Uploaded CSV saved temporarily to: {temp_csv_file_path}")
 
         # Process emails
-        results, validation_stats, processing_error, remaining_df = await process_csv_and_send_emails(
+        results, validation_stats, processing_error = await process_csv_and_send_emails(
             subjectForEmail=subjectForEmail,
-            csv_file_path=temp_data_file_path, 
+            csv_file_path=temp_csv_file_path,
             sender_email=sender_email,
             sender_name=sender_name,
             sender_password=sender_password,
             smtp_server=smtp_server,
             smtp_port=smtp_port,
-            template_content=templates,
+            template_content=email_template_content,
             max_emails=max_emails,
-            delay=delay,
-            original_file_extension=file_extension
+            delay=delay
         )
 
         if processing_error:
             raise HTTPException(status_code=500, detail=processing_error)
 
         summary = display_summary(results, validation_stats)
-        
-        # Create feedback CSV file
-        feedback_csv_path = None
-        try:
-            feedback_csv_path = f"email_feedback_{int(time.time())}.csv"
-            with open(feedback_csv_path, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['name', 'email', 'success', 'message']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                
-                for result in results:
-                    writer.writerow({
-                        'name': result['name'],
-                        'email': result['email'],
-                        'success': result['success'],
-                        'message': result['message']
-                    })
-        except Exception as e:
-            print(f"Error creating feedback CSV: {e}")
-            feedback_csv_path = None
 
-        # After processing emails and getting results, save the remaining rows
-        updated_data_filename = None
-        if remaining_df is not None and not remaining_df.empty:
-            filename_without_ext, ext = os.path.splitext(original_filename)
-            new_data_filename = f"{filename_without_ext}_updateAfterDel{ext}"
-            
-            # Save the new file in the current working directory
-            new_data_file_path = new_data_filename
-            
-            # Save the remaining DataFrame to a new file based on original extension
-            try:
-                if ext.lower() == '.csv':
-                    remaining_df.to_csv(new_data_file_path, index=False, encoding='utf-8')
-                elif ext.lower() in ['.xlsx', '.xls', '.xlsn', '.xlsb', '.xltm', '.xltx']:
-                    remaining_df.to_excel(new_data_file_path, index=False)
-                else:
-                    print(f"Warning: Could not save updated file with extension {ext}. Falling back to CSV format.")
-                    remaining_df.to_csv(new_data_file_path, index=False, encoding='utf-8')
-                updated_data_filename = new_data_file_path
-                print(f"New updated file created with remaining data: {new_data_file_path}")
-            except Exception as e:
-                print(f"Error saving updated data file: {e}")
-        else:
-            print("No remaining rows to save or remaining_df is None/empty.")
-
-
-        # Return JSONResponse with summary and paths to generated files if any
-        response_content = {
+        return JSONResponse(content={
             "status": "Email sending process completed.",
-            "summary": summary
-        }
-        if feedback_csv_path and os.path.exists(feedback_csv_path):
-            response_content["feedback_csv_filename"] = os.path.basename(feedback_csv_path)
-        if updated_data_filename and os.path.exists(updated_data_filename):
-            response_content["updated_data_filename"] = os.path.basename(updated_data_filename)
-            
-        return JSONResponse(content=response_content)
+            "summary": summary,
+        })
 
     except HTTPException as e:
         raise e
@@ -1073,79 +983,64 @@ async def send_emails_endpoint(
         print(f"An unexpected error occurred in send_emails_endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"An internal server error occurred: {e}")
     finally:
-        if temp_data_file_path and os.path.exists(temp_data_file_path):
-            os.remove(temp_data_file_path)
-            print(f"Temporary data file removed: {temp_data_file_path}")
-            
+        if temp_csv_file_path and os.path.exists(temp_csv_file_path):
+            os.remove(temp_csv_file_path)
+            print(f"Temporary CSV file removed: {temp_csv_file_path}")
+
 # Email Filter Router
 
 
 
 
-@app.post("/email-filter/process", summary="Process CSV/Excel and filter emails")
+@app.post("/email-filter/process", summary="Process CSV and filter emails")
 async def filter_emails_endpoint(
-    csv_file: UploadFile = File(...), # Renamed for clarity, but still accepts various types
+    csv_file: UploadFile = File(...),
     sender_email: EmailStr = Form(...),
     resume: bool = Form(False)
 ):
-    """
-    API endpoint to upload a CSV or Excel file, filter emails, and return the filtered CSV.
-    Supports resuming processing from a previous attempt if a checkpoint exists.
-    """
-    allowed_extensions = ('.csv', '.xlsx', '.xls', '.xlsn', '.xlsb', '.xltm', '.xltx')
-    file_extension = os.path.splitext(csv_file.filename)[1].lower()
+    if not csv_file.filename or not csv_file.filename.lower().endswith('.csv'):
+        raise HTTPException(status_code=400, detail="Please upload a valid CSV file.")
 
-    if not csv_file.filename or file_extension not in allowed_extensions:
-        raise HTTPException(status_code=400, detail=f"Please upload a valid file with one of these extensions: {', '.join(allowed_extensions)}.")
-
-    temp_input_file_path = None
-    filtered_output_file_path = None
-    checkpoint_file_for_resume = None
+    temp_csv_file_path = None
+    filtered_file_path = None
+    checkpoint_file = None
 
     try:
-        # Save the uploaded file to a temporary location, preserving its original extension
-        with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp:
+        # Save the uploaded CSV to a temporary file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
             shutil.copyfileobj(csv_file.file, tmp)
-            temp_input_file_path = tmp.name
+            temp_csv_file_path = tmp.name
 
-        print(f"Uploaded file saved temporarily to: {temp_input_file_path}")
+        print(f"Uploaded CSV saved temporarily to: {temp_csv_file_path}")
 
-        # Set up checkpoint file path if resuming
+        # Set up checkpoint file if resuming
         if resume:
-            base_name_temp = os.path.basename(temp_input_file_path)
-            file_name_temp, _ = os.path.splitext(base_name_temp)
-            checkpoint_file_for_resume = f"{file_name_temp}_checkpoint.txt"
+            base_name = os.path.basename(temp_csv_file_path)
+            file_name, _ = os.path.splitext(base_name)
+            checkpoint_file = f"{file_name}_checkpoint.txt"
             
-            if not os.path.exists(checkpoint_file_for_resume):
-                raise HTTPException(status_code=400, detail="Resume requested, but no checkpoint file found to resume from. Please ensure the original file name and its temporary path context are consistent with a prior run.")
+            if not os.path.exists(checkpoint_file):
+                raise HTTPException(status_code=400, detail="No checkpoint file found to resume from.")
         
-        # Process the file to filter emails
-        filtered_output_file_path = process_csv_file_filter(temp_input_file_path, sender_email, checkpoint_file_for_resume)
+        # Process the CSV file to filter emails
+        filtered_file_path = process_csv_file_filter(temp_csv_file_path, sender_email, checkpoint_file)
 
         # Return the filtered file
         return FileResponse(
-            path=filtered_output_file_path,
-            filename=os.path.basename(filtered_output_file_path),
-            media_type='text/csv' # The output is always a CSV
+            path=filtered_file_path,
+            filename=os.path.basename(filtered_file_path),
+            media_type='text/csv'
         )
 
     except HTTPException as e:
-        # Re-raise HTTPExceptions as they are specific errors to be handled by FastAPI
         raise e
     except Exception as e:
-        # Catch any other unexpected errors and provide a generic 500 response
         print(f"An unexpected error occurred in filter_emails_endpoint: {e}")
         raise HTTPException(status_code=500, detail=f"An internal server error occurred: {e}")
     finally:
-        # Clean up the temporary input file
-        if temp_input_file_path and os.path.exists(temp_input_file_path):
-            os.remove(temp_input_file_path)
-            print(f"Temporary input file removed: {temp_input_file_path}")
-        
-        # The filtered_output_file_path is returned as a FileResponse and should not be
-        # removed immediately here. FastAPI handles sending it. If a more
-        # robust temporary file cleanup is needed for output files after they are served,
-        # it should be implemented as a separate scheduled task or a FastAPI background task.
+        if temp_csv_file_path and os.path.exists(temp_csv_file_path):
+            os.remove(temp_csv_file_path)
+            print(f"Temporary CSV file removed: {temp_csv_file_path}")
 
 # Email Scraper Router
 
